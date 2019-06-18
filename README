@@ -1,0 +1,17 @@
+README
+
+Setup networking to DEBUG using Visual studio
+1) docker network create -d bridge --gateway=172.19.0.1 --subnet=172.19.0.0/24 tiny_url_network
+2) change docker-compose.yml
+    a) define external network 
+        networks: 
+            default:
+                external:
+                name: tiny_url_network
+    b) set static ip to mongodb and change command to bind_ip_all
+            networks:
+                default:
+                    ipv4_address: 172.19.0.2
+            command: mongod --bind_ip_all
+3) docker-compose up
+4) edit csproj to include <DockerfileRunArguments>--network=tiny_url_network</DockerfileRunArguments> inside property group
