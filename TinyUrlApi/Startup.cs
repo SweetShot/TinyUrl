@@ -1,19 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Builder;
+﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Swashbuckle.AspNetCore.Swagger;
 using TinyUrlApi.Config;
 using TinyUrlApi.Data;
-using TinyUrlApi.Models;
 
 namespace TinyUrlApi
 {
@@ -34,7 +26,8 @@ namespace TinyUrlApi
 
             var tinyUrlContext = new TinyUrlContext(config.MongoDB);
 
-            var repo = new TinyUrlRepository(tinyUrlContext);
+            //var repo = new TinyUrlRepository(tinyUrlContext);
+            var repo = new TinyUrlBulkWriteRepository(tinyUrlContext);
 
             services.AddSingleton<ITinyUrlRepository>(repo);
 

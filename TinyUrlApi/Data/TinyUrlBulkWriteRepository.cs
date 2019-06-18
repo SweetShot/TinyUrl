@@ -1,78 +1,113 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using MongoDB.Bson;
 using MongoDB.Driver;
-using TinyUrlApi.Helpers;
 
 namespace TinyUrlApi.Data
 {
     public class TinyUrlBulkWriteRepository : ITinyUrlRepository
     {
-        private ITinyUrlContext _context;
+        private readonly ITinyUrlContext _context;
 
+        private readonly Tuple<List<WriteModel<MongoUrlEntity>>, List<EventWaitHandle>> _ops = 
+            new Tuple<List<WriteModel<MongoUrlEntity>>, List<EventWaitHandle>>(new List<WriteModel<MongoUrlEntity>>(), 
+                                                                               new List<EventWaitHandle>());
+
+        private readonly Task _executionTask; 
+        private readonly CancellationTokenSource _executionTaskCancellationTokenSource;
         public TinyUrlBulkWriteRepository(ITinyUrlContext context)
         {
             _context = context;
+            _executionTaskCancellationTokenSource = new CancellationTokenSource();
+            _executionTask = Task.Run(() => ExecutionTask(_executionTaskCancellationTokenSource.Token));
         }
 
-        public void Process()
+        private void ExecutionTask(CancellationToken token)
         {
-            var ops = new List<WriteModel<MongoUrlEntity>>();
+            while (true)
+            {
+                Task.Delay(100).Wait();
+                if (_ops.Item1.Count == 0)
+                {
+                    continue;
+                }
 
-            ops.Add(new InsertOneModel<MongoUrlEntity>(new MongoUrlEntity
-            {
-                LongUrl = "t1", ServerPrefix = Global.Prefix, ShortUrlId = new BsonInt64(Global.GetCounter())
-            }));
-            ops.Add(new InsertOneModel<MongoUrlEntity>(new MongoUrlEntity
-            {
-                LongUrl = "t2",
-                ServerPrefix = Global.Prefix,
-                ShortUrlId = new BsonInt64(Global.GetCounter())
-            }));
-            ops.Add(new InsertOneModel<MongoUrlEntity>(new MongoUrlEntity
-            {
-                LongUrl = "t3",
-                ServerPrefix = Global.Prefix,
-                ShortUrlId = new BsonInt64(Global.GetCounter())
-            }));
-            ops.Add(new InsertOneModel<MongoUrlEntity>(new MongoUrlEntity
-            {
-                LongUrl = "t4",
-                ServerPrefix = Global.Prefix,
-                ShortUrlId = new BsonInt64(Global.GetCounter())
-            }));
-            ops.Add(new InsertOneModel<MongoUrlEntity>(new MongoUrlEntity
-            {
-                LongUrl = "t5",
-                ServerPrefix = Global.Prefix,
-                ShortUrlId = new BsonInt64(Global.GetCounter())
-            }));
+                WriteModel<MongoUrlEntity>[] insertList;
+                EventWaitHandle[] eventList;
+                lock (_ops)
+                {
+                    insertList = _ops.Item1.ToArray();
+                    eventList = _ops.Item2.ToArray();
+                    _ops.Item1.Clear();
+                    _ops.Item2.Clear();
+                }
+                var ans = _context.TinyUrlCollection.BulkWrite(insertList);
+                if (ans.InsertedCount != insertList.Length)
+                {
+                    throw new Exception("Insertion does not match expected");
+                }
+                foreach (var eventWait in eventList)
+                {
+                    eventWait.Set();
+                }
 
-            var ans = _context.TinyUrlCollection.BulkWrite(ops);
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+            }
+        }
 
-            Console.WriteLine();
+        Task<MongoUrlEntity> AddInsertTask(MongoUrlEntity urlEntity)
+        {
+            var waitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
+            lock (_ops)
+            {
+                _ops.Item1.Add(new InsertOneModel<MongoUrlEntity>(urlEntity));
+                _ops.Item2.Add(waitHandle);
+            }
+
+            var task = Task.Factory.StartNew(() =>
+            {
+                waitHandle.WaitOne();
+                return urlEntity;
+            });
+            
+            return task;
         }
 
         public MongoUrlEntity GetLongUrl(long shortUrlId)
         {
-            throw new NotImplementedException();
+            return _context.TinyUrlCollection.Find(url => url.ShortUrlId == shortUrlId).FirstOrDefault();
         }
 
         public MongoUrlEntity PostLongUrl(MongoUrlEntity longMongoUrl)
         {
-            throw new NotImplementedException();
+            var t = AddInsertTask(longMongoUrl);
+            t.Wait();
+            if (t.IsFaulted)
+            {
+                throw t.Exception ?? new Exception("Task faulted with empty exception.");
+            }
+            return t.Result;
         }
 
         public Task<MongoUrlEntity> GetLongUrlAsync(long shortUrlId)
         {
-            throw new NotImplementedException();
+            return _context.TinyUrlCollection.Find(url => url.ShortUrlId == shortUrlId).FirstOrDefaultAsync();
         }
 
         public Task PostLongUrlAsync(MongoUrlEntity longMongoUrl)
         {
-            throw new NotImplementedException();
+            return AddInsertTask(longMongoUrl);
         }
+
+        ~TinyUrlBulkWriteRepository()
+        {
+            _executionTaskCancellationTokenSource.Cancel();
+            _executionTask.Wait();
+        }
+        
     }
 }
